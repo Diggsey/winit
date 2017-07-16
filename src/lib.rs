@@ -105,6 +105,9 @@ extern crate percent_encoding;
 #[macro_use]
 extern crate wayland_client;
 
+#[cfg(feature="context")]
+extern crate context;
+
 pub use events::*;
 pub use window::{AvailableMonitorsIter, MonitorId};
 

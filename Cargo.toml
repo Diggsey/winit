@@ -25,6 +25,7 @@ objc = "0.2"
 cocoa = "0.13"
 core-foundation = "0.4"
 core-graphics = "0.12"
+context = { version = "2.0", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies.winapi]
 version = "0.3"
