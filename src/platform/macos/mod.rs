@@ -40,5 +40,3 @@ impl Window {
 mod events_loop;
 mod monitor;
 mod window;
-
-mod timer;
