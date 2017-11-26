@@ -1,13 +1,13 @@
 use std;
 use std::sync::Arc;
 use cocoa;
-use cocoa::appkit::{self, NSApplication, NSApp, NSEvent, NSView, NSWindow};
+use cocoa::appkit::{self, NSApplication, NSApp, NSEvent, NSView, NSWindow, NSEventMask, NSEventModifierFlags, NSEventPhase};
 use cocoa::foundation;
 use core_foundation::base::{CFRetain,CFRelease,CFTypeRef};
 
 use super::Timeout;
 use super::super::DeviceId;
-use super::super::window::{self, Window};
+use super::super::window::{self, Window2};
 use events::{self, ElementState, Event, MouseButton, TouchPhase, DeviceEvent, WindowEvent, ModifiersState, KeyboardInput};
 
 // RetainedEvent wraps an `NSEvent`, incrementing its refcount on `new` and decrementing on `drop`.
@@ -77,9 +77,9 @@ impl PersistentState {
 }
 
 pub trait WindowFinder {
-    fn find_window_by_id(&self, id: window::Id) -> Option<Arc<Window>>;
+    fn find_window_by_id(&self, id: window::Id) -> Option<Arc<Window2>>;
 
-    fn find_key_window(&self) -> Option<Arc<Window>> {
+    fn find_key_window(&self) -> Option<Arc<Window2>> {
         unsafe {
             let cocoa_id = msg_send![NSApp(), keyWindow];
             if cocoa_id == cocoa::base::nil {
@@ -146,7 +146,7 @@ pub fn receive_event_from_cocoa(timeout: Timeout) -> Option<RetainedEvent> {
 
         // Poll for the next event
         let ns_event = appkit::NSApp().nextEventMatchingMask_untilDate_inMode_dequeue_(
-            appkit::NSAnyEventMask.bits() | appkit::NSEventMaskPressure.bits(),
+            NSEventMask::NSAnyEventMask.bits() | NSEventMask::NSEventMaskPressure.bits(),
             timeout,
             foundation::NSDefaultRunLoopMode,
             cocoa::base::YES);
@@ -273,7 +273,7 @@ pub fn to_events<WF>(event: &RetainedEvent, state: &mut PersistentState, window_
                 }
 
                 if let Some(window_event) = modifier_event(ns_event,
-                                                           appkit::NSShiftKeyMask,
+                                                           NSEventModifierFlags::NSShiftKeyMask,
                                                            events::VirtualKeyCode::LShift,
                                                            state.modifiers.shift_pressed)
                     {
@@ -282,7 +282,7 @@ pub fn to_events<WF>(event: &RetainedEvent, state: &mut PersistentState, window_
                     }
 
                 if let Some(window_event) = modifier_event(ns_event,
-                                                           appkit::NSControlKeyMask,
+                                                           NSEventModifierFlags::NSControlKeyMask,
                                                            events::VirtualKeyCode::LControl,
                                                            state.modifiers.ctrl_pressed)
                     {
@@ -291,7 +291,7 @@ pub fn to_events<WF>(event: &RetainedEvent, state: &mut PersistentState, window_
                     }
 
                 if let Some(window_event) = modifier_event(ns_event,
-                                                           appkit::NSCommandKeyMask,
+                                                           NSEventModifierFlags::NSCommandKeyMask,
                                                            events::VirtualKeyCode::LWin,
                                                            state.modifiers.win_pressed)
                     {
@@ -300,7 +300,7 @@ pub fn to_events<WF>(event: &RetainedEvent, state: &mut PersistentState, window_
                     }
 
                 if let Some(window_event) = modifier_event(ns_event,
-                                                           appkit::NSAlternateKeyMask,
+                                                           NSEventModifierFlags::NSAlternateKeyMask,
                                                            events::VirtualKeyCode::LAlt,
                                                            state.modifiers.alt_pressed)
                     {
@@ -309,15 +309,38 @@ pub fn to_events<WF>(event: &RetainedEvent, state: &mut PersistentState, window_
                     }
             },
 
-            appkit::NSLeftMouseDown => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Pressed, button: MouseButton::Left })); },
-            appkit::NSLeftMouseUp => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Released, button: MouseButton::Left })); },
-            appkit::NSRightMouseDown => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Pressed, button: MouseButton::Right })); },
-            appkit::NSRightMouseUp => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Released, button: MouseButton::Right })); },
-            appkit::NSOtherMouseDown => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Pressed, button: MouseButton::Middle })); },
-            appkit::NSOtherMouseUp => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Released, button: MouseButton::Middle })); },
+            appkit::NSLeftMouseDown => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Pressed, button: MouseButton::Left, modifiers: event_mods(ns_event) })); },
+            appkit::NSLeftMouseUp => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Released, button: MouseButton::Left, modifiers: event_mods(ns_event) })); },
+            appkit::NSRightMouseDown => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Pressed, button: MouseButton::Right, modifiers: event_mods(ns_event) })); },
+            appkit::NSRightMouseUp => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Released, button: MouseButton::Right, modifiers: event_mods(ns_event) })); },
+            appkit::NSOtherMouseDown => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Pressed, button: MouseButton::Middle, modifiers: event_mods(ns_event) })); },
+            appkit::NSOtherMouseUp => { events.push(into_event(WindowEvent::MouseInput { device_id: DEVICE_ID, state: ElementState::Released, button: MouseButton::Middle, modifiers: event_mods(ns_event) })); },
 
-            appkit::NSMouseEntered => { events.push(into_event(WindowEvent::MouseEntered { device_id: DEVICE_ID })); },
-            appkit::NSMouseExited => { events.push(into_event(WindowEvent::MouseLeft { device_id: DEVICE_ID })); },
+            appkit::NSMouseEntered => {
+                let window = match maybe_window.or_else(|| window_finder.find_key_window()) {
+                    Some(window) => window,
+                    None => return events,
+                };
+
+                let window_point = ns_event.locationInWindow();
+                let view_point = if ns_window == cocoa::base::nil {
+                    let ns_size = foundation::NSSize::new(0.0, 0.0);
+                    let ns_rect = foundation::NSRect::new(window_point, ns_size);
+                    let window_rect = window.window.convertRectFromScreen_(ns_rect);
+                    window.view.convertPoint_fromView_(window_rect.origin, cocoa::base::nil)
+                } else {
+                    window.view.convertPoint_fromView_(window_point, cocoa::base::nil)
+                };
+                let view_rect = NSView::frame(*window.view);
+                let scale_factor = window.hidpi_factor();
+
+                let x = (scale_factor * view_point.x as f32) as f64;
+                let y = (scale_factor * (view_rect.size.height - view_point.y) as f32) as f64;
+
+                events.push(into_event(WindowEvent::CursorMoved { device_id: DEVICE_ID, position: (x, y), modifiers: event_mods(ns_event) }));
+                events.push(into_event(WindowEvent::CursorEntered { device_id: DEVICE_ID }));
+            },
+            appkit::NSMouseExited => { events.push(into_event(WindowEvent::CursorLeft { device_id: DEVICE_ID })); },
 
             appkit::NSMouseMoved |
             appkit::NSLeftMouseDragged |
@@ -346,7 +369,7 @@ pub fn to_events<WF>(event: &RetainedEvent, state: &mut PersistentState, window_
                 {
                     let x = (scale_factor * view_point.x as f32) as f64;
                     let y = (scale_factor * (view_rect.size.height - view_point.y) as f32) as f64;
-                    let window_event = WindowEvent::MouseMoved { device_id: DEVICE_ID, position: (x, y) };
+                    let window_event = WindowEvent::CursorMoved { device_id: DEVICE_ID, position: (x, y), modifiers: event_mods(ns_event) };
                     let event = Event::WindowEvent { window_id: ::WindowId(window.id()), event: window_event };
                     events.push(event);
                 }
@@ -361,6 +384,12 @@ pub fn to_events<WF>(event: &RetainedEvent, state: &mut PersistentState, window_
                 let delta_y = (scale_factor * ns_event.deltaY() as f32) as f64;
                 if delta_y != 0.0 {
                     let motion_event = DeviceEvent::Motion { axis: 1, value: delta_y };
+                    let event = Event::DeviceEvent{ device_id: DEVICE_ID, event: motion_event };
+                    events.push(event);
+                }
+
+                if delta_x != 0.0 || delta_y != 0.0 {
+                    let motion_event = DeviceEvent::MouseMotion { delta: (delta_x, delta_y) };
                     let event = Event::DeviceEvent{ device_id: DEVICE_ID, event: motion_event };
                     events.push(event);
                 }
@@ -383,11 +412,23 @@ pub fn to_events<WF>(event: &RetainedEvent, state: &mut PersistentState, window_
                               scale_factor * ns_event.scrollingDeltaY() as f32)
                 };
                 let phase = match ns_event.phase() {
-                    appkit::NSEventPhaseMayBegin | appkit::NSEventPhaseBegan => TouchPhase::Started,
-                    appkit::NSEventPhaseEnded => TouchPhase::Ended,
+                    NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan => TouchPhase::Started,
+                    NSEventPhase::NSEventPhaseEnded => TouchPhase::Ended,
                     _ => TouchPhase::Moved,
                 };
-                let window_event = WindowEvent::MouseWheel { device_id: DEVICE_ID, delta: delta, phase: phase };
+                events.push(Event::DeviceEvent {
+                    device_id: DEVICE_ID,
+                    event: DeviceEvent::MouseWheel {
+                        delta: if ns_event.hasPreciseScrollingDeltas() == cocoa::base::YES {
+                            PixelDelta(ns_event.scrollingDeltaX() as f32,
+                                       ns_event.scrollingDeltaY() as f32)
+                        } else {
+                            LineDelta(ns_event.scrollingDeltaX() as f32,
+                                      ns_event.scrollingDeltaY() as f32)
+                        },
+                    }
+                });
+                let window_event = WindowEvent::MouseWheel { device_id: DEVICE_ID, delta: delta, phase: phase, modifiers: event_mods(ns_event) };
                 events.push(into_event(window_event));
             },
 
@@ -545,10 +586,10 @@ fn event_mods(event: cocoa::base::id) -> ModifiersState {
         NSEvent::modifierFlags(event)
     };
     ModifiersState {
-        shift: flags.contains(appkit::NSShiftKeyMask),
-        ctrl: flags.contains(appkit::NSControlKeyMask),
-        alt: flags.contains(appkit::NSAlternateKeyMask),
-        logo: flags.contains(appkit::NSCommandKeyMask),
+        shift: flags.contains(NSEventModifierFlags::NSShiftKeyMask),
+        ctrl: flags.contains(NSEventModifierFlags::NSControlKeyMask),
+        alt: flags.contains(NSEventModifierFlags::NSAlternateKeyMask),
+        logo: flags.contains(NSEventModifierFlags::NSCommandKeyMask),
     }
 }
 

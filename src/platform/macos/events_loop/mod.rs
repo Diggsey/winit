@@ -25,7 +25,7 @@ use {ControlFlow, EventsLoopClosed};
 use events::Event;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, Weak};
-use super::window::{self, Window};
+use super::window::{self, Window2};
 
 mod nsevent;
 
@@ -47,7 +47,7 @@ pub struct EventsLoop {
 
 // State shared between the `EventsLoop` and its registered windows.
 pub struct Shared {
-    pub windows: Mutex<Vec<Weak<Window>>>,
+    pub windows: Mutex<Vec<Weak<Window2>>>,
 
     // A queue of events that are pending delivery to the library user.
     pub pending_events: Mutex<VecDeque<Event>>,
@@ -95,7 +95,7 @@ impl Shared {
 }
 
 impl nsevent::WindowFinder for Shared {
-    fn find_window_by_id(&self, id: window::Id) -> Option<Arc<Window>> {
+    fn find_window_by_id(&self, id: window::Id) -> Option<Arc<Window2>> {
         for window in self.windows.lock().unwrap().iter() {
             if let Some(window) = window.upgrade() {
                 if window.id() == id {
@@ -185,6 +185,7 @@ impl EventsLoop {
     }
 }
 
+#[derive(Clone)]
 pub struct Proxy {
     shared: Weak<Shared>,
 }
